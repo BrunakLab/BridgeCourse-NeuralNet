@@ -206,16 +206,7 @@ auc(roc_obj)
 coords(roc_obj, c(0.1,0.2, 0.4, 0.5, 0.7), ret=c("tp", "tn", "fp", "fn", "sensitivity", "specificity"))
 ```
 
-### Additional
-Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes. 
-```{r}
-
-## add code here
-
-```
-
-
-
+### Additional 1
 Try use the keras package. Have a look at the documentation [here](https://www.rstudio.com/blog/keras-for-r/) and build the best possible neural network. 
 ```{r}
 
@@ -246,3 +237,13 @@ history <- model %>% fit(
 )
 
 ```
+
+## Additional 2
+
+Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes. 
+```{r}
+
+## add code here
+
+```
+
