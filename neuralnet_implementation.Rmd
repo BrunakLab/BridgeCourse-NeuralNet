@@ -11,16 +11,16 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ## What is a Neural network (NN)
-A neural netowork (NN) can be defined as a model of reasoning based on the human brain. The electric signal in our brain is propagated by neurons. Neurons have the ability to create connections between each others and to adapt to stimulation pattern. This plasticity is the basic mechanism for learning.
+A neural network (NN) can be defined as a model of reasoning based on the human brain. The electric signal in our brain is propagated by neurons. Neurons have the ability to create connections between each others and to adapt to stimulation pattern. This plasticity is the basic mechanism for learning.
 
 Neural netoworks like human brain have some common aspects:
 
-* The knowledge is acquired through a learnign process.
-* The knowledge is stored in weights (synaptic strenght in the human brain and numeric contribution in NN)
+* The knowledge is acquired through a learning process.
+* The knowledge is stored in weights (synaptic strength in the human brain and numeric contribution in NN)
  
 ## The neuron
 
-The three basic structures in a NN are the neurons, the architecture and the learning alghoritm.
+The three basic structures in a NN are the neurons, the architecture and the learning algorithm.
 
 Neurons are the processing elements: they process the signal received as input and pass it through an activation function, hence generating the output.
 
@@ -28,7 +28,7 @@ Neurons are the processing elements: they process the signal received as input a
 
 ## The architecture
 
-The architecture defines the number of neurons and their connectivity. A NN usually consists of layers of neurons stacked together; each neuron learns a specific rappresentation of the output from the previous layer based on the weights and the activation function.
+The architecture defines the number of neurons and their connectivity. A NN usually consists of layers of neurons stacked together; each neuron learns a specific representation of the output from the previous layer based on the weights and the activation function.
 
 ---
 
@@ -40,7 +40,7 @@ Since the computation of the final output propagates only in one direction, from
 
 ## The learnign alghoritm
 
-The learning alghoritm is the mean for the model to store the knowledge in numerical weights. A cost function, usually called loss function, is used for assessing the quality of the prediction. Then the weights of the model are updated in order to minimize the error. This step is called backpropagation, because it propagates in the opposite direction of the feed forward pass. 
+The learning algorithm is the mean for the model to store the knowledge in numerical weights. A cost function, usually called loss function, is used for assessing the quality of the prediction (i.e. how close the prediction is to the target). Then the weights of the model are updated in order to minimize the error. This step is called backpropagation, because it propagates in the opposite direction of the feed forward pass. 
 
 ### Optimization alghoritm
 
@@ -51,12 +51,12 @@ THe decision of how to modify the weights is up to the optimization algorithm. A
 ## Where to start? 
 
 A nice place where to start with neural networks is the [Tensorflow Playground](https://playground.tensorflow.org/), an interactive visualization web application
-written in JavaScript that allows to simulate real time simple neural networks. Tensorflow is a software library often used for machine learing applications (as others like pytorch etc.). On the playground website, you can have a graphical explanation of how the achitecture of a network changes accordingly to the number of neurons and layers, as well as how the activation function and the prediction task affect the learning process. Indeed, finding the right hyperparameters usually requires some time during the model development.
+written in JavaScript that allows to simulate real time simple neural networks. Tensorflow is a software library often used for machine learning applications (as others like pytorch etc.). On the playground website, you can have a graphical explanation of how the architecture of a network changes accordingly to the number of neurons and layers, as well as how the activation function and the prediction task affect the learning process. Indeed, finding the right hyperparameters usually requires some time during the model development. You can start with a simple network having only the input layer and the neuron generating the prediction (a simple regression) and than adding more layer and units you can see how more complicated tasks can be achieved.  
 
 <br /><p align="center">![tensorflow playground](https://miro.medium.com/max/3200/0*Uw7cusbCha9kQOGN.)<p><br />
 
 # Neural network for longitudinal data
-The aim of this notebook is to predict 5 years mortality for patients that got diagnosed with hypertension before the age of 65, depending on their disease hystory. In order to accomplish this task, the trajectory extracted previously in the course will be used as input.
+The aim of this notebook is to predict 5 years mortality for patients that got diagnosed with hypertension before the age of 65, depending on their disease history. In order to accomplish this task, the trajectory extracted previously in the course will be used as input.
 
 Here we load the libraries used for the data transformation, for the neural network implementation and for the results analysis. If any of the library is missing, you can install it using the command *install.packages(pkgs)*.
 
@@ -65,6 +65,7 @@ library(tidyverse)
 library(lubridate)
 library(neuralnet)
 library(pROC)
+library(keras)
 ```
 
 Here you can load the three files used in this notebook.
@@ -85,7 +86,7 @@ cpr$STATUS_DATE <- as.Date(cpr$STATUS_DATE)
 lpr$ADM_DATE <- as.Date(lpr$ADM_DATE)
 ```
 
-Here we select the patients that got hypertension disease code before 65y. In order to do so, we first merge lpr table with cpr table. The function *inner_join* from *dplr* library allows us to merge the two tables. The key for merging is passed to the function through the parameter *by=*. 
+Here we select the patients that got hypertension disease code before 65y. In order to do so, we first merge lpr table with cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The key for merging is passed to the function through the parameter *by=*. 
 
 ```{r}
 cpr_to_lpr <- inner_join(cpr, lpr, by='ID') 
@@ -103,7 +104,7 @@ cpr_to_lpr <- cpr_to_lpr %>%
 head(cpr_to_lpr)
 ```
 
-At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, it is necessary to deal with the censored patients, those patients whose AGE_AT_STATUS is not far enough from the AGE_AT_DIAG, so we do not know if the event of interest, death, has occured between the end of the study period and the fifth year after the year of diagnose. As a simplified example, we can just exclude the censored patient. 
+At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, it is necessary to deal with the censored patients, i.e. those patients that were not followed up for the 5 years after they entered the study. For those patients we only have partial followup and therefore for simplicity we will exclude them. 
 
 ```{r}
 cpr_to_lpr <- cpr_to_lpr %>% 
@@ -206,15 +207,42 @@ coords(roc_obj, c(0.1,0.2, 0.4, 0.5, 0.7), ret=c("tp", "tn", "fp", "fn", "sensit
 ```
 
 ### Additional
-Think about other possible ways to encode the disease trajectories as input for the neural network model.
-
-If you run the network without hidden layer, you can have an idea of the impact each trajectory has on the final prediction prediction. Higher is the weight higher is the contribute to pull the prediction towards one.
-
+Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes. 
 ```{r}
-name_weights <- colnames(nn$covariate) #here you take from covariate the name of the input feature in the order the weight matrix is stored
-w <- nn$weights[[1]][[1]] #extract the weight matrix
-weights_df <- data.frame(c("Bias", name_weights), w) # create a dataframe 
-colnames(weights_df) <- c("trajectory", "weight")
-ggplot(weights_df, aes(trajectory, weight)) + geom_col(stat='identity') + theme(axis.text.y = element_text(face="bold", color="black",  size=8)) #plot the weight
- 
+
+## add code here
+
+```
+
+
+
+Try use the keras package. Have a look at the documentation [here](https://www.rstudio.com/blog/keras-for-r/) and build the best possible neural network. 
+```{r}
+
+## add code here
+#see this example
+
+model <- keras_model_sequential()
+model %>%
+  layer_dense(units = 256, activation = "relu", input_shape = c(ncol(nn_input_train) -1)) %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  metrics = c("accuracy", "mse")
+)
+
+xtrain_keras <- simplify2array(nn_input_train[!(colnames(nn_input_train) %in% "OUTCOME")])
+ytrain_keras <- simplify2array(nn_input_train[colnames(nn_input_train) %in% "OUTCOME"])
+
+history <- model %>% fit(
+  xtrain_keras, ytrain_keras, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2
+)
+
 ```
