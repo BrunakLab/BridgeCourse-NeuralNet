@@ -1,0 +1,210 @@
+---
+output:
+  html_document:
+    df_print: paged
+  output: default
+title: "Implementing a Neural Network"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Neural network for longitudinal data
+The aim of this notebook is to predict 5 years mortality for patients diagnosed with hypertension before the age of 65 using on their disease history. To accomplish this task, we will use the synthetic data provided. 
+
+Here we load the libraries used for the data transformation, for the neural network implementation and for the analysis of the results. If a library is missing, you can install it using the command *install.packages(pkgs)*.
+
+```{r, echo=TRUE, message=FALSE, results='hide'}
+library(tidyverse)
+library(lubridate)
+library(pROC)
+library(keras)
+```
+
+Here you can load the three files used in this notebook. I would suggest spending some time here to understand the content of the different files.
+
+```{r}
+cpr <- read.csv('cpr.tsv', sep='\t', header = TRUE)
+lpr <- read.csv('lpr.tsv', sep='\t', header = TRUE)
+trj <- read.csv('trj.tsv', sep='\t', header = TRUE)
+
+head (cpr)
+head (lpr)
+head (trj)
+```
+
+In order to make transformation to the dates, we need to parse them as such. The command *as.Date* is used to convert the columns in the desired format.
+```{r}
+cpr$BIRTHDAY <- as.Date(cpr$BIRTHDAY)
+cpr$STATUS_DATE <- as.Date(cpr$STATUS_DATE)
+lpr$ADM_DATE <- as.Date(lpr$ADM_DATE)
+```
+
+Here we select the patients that got hypertension disease code before 65y. In order to do so, we first merge lpr table with cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The key for merging is passed to the function through the parameter *by=*. 
+
+```{r}
+cpr_to_lpr <- inner_join(cpr, lpr, by='ID') 
+```
+
+Then we add the columns *AGE_AT_DIAG* and *AGE_AT_STATUS* using the mutate function in *dplyr.* The two columns indicate how old was the patient when he got first time diagnosed with hypertension and how old he was at the *STATUS_DATE*.
+
+```{r}
+cpr_to_lpr <- cpr_to_lpr %>% 
+  mutate(
+    AGE_AT_DIAG = time_length(BIRTHDAY %--% ADM_DATE, "years") %>% round(1),
+    AGE_AT_STATUS = time_length(BIRTHDAY %--% STATUS_DATE, "years") %>% round(1)
+  )
+
+head(cpr_to_lpr)
+```
+
+At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, we will also exclude those patients that were alive at the 'end of the registry' and received their I10 diagnosis in the last 5 years. This choice allows us to simplify the design of the experiment by ignoring censored patients.  
+
+
+```{r}
+cpr_to_lpr <- cpr_to_lpr %>% 
+  filter(AGE_AT_DIAG < 65) %>%
+  filter((AGE_AT_STATUS - AGE_AT_DIAG) > 5 | STATUS == 90)
+
+head(cpr_to_lpr)
+```
+
+The final step is to generate the outcome column. The binary outcome encodes death as 1 and survival as 0.
+
+```{r}
+
+cpr_to_lpr <- cpr_to_lpr %>% 
+  mutate (
+    OUTCOME  = (AGE_AT_STATUS - AGE_AT_DIAG) < 5 & STATUS == 90 %>% as.integer() #Death needs to occur within 5 years, and LPR STATUS has to be 90. 
+  )
+
+head(cpr_to_lpr)
+#cpr_to_lpr$OUTCOME <- as.integer((cpr_to_lpr$AGE_AT_STATUS - cpr_to_lpr$AGE_AT_DIAG) < 5 & cpr_to_lpr$STATUS == 90)
+
+```
+
+#### Generate the input
+The model takes as input a table containing the target (the OUTCOME column generated above) and the input data. In order to generate the input for the model, we first need to extract the unique trajectories all the patients have, so that we can index them.
+
+```{r}
+unique_trj <- unique(trj[-1]) # with -1 we exclude the ID column (we would have otherwise a unique row for each patient)
+
+unique_trj$TRJ_IDX <- paste("T", c(1:nrow(unique_trj)), sep='') # here we generate an index for each trajectory. 
+
+head(unique_trj)
+```
+
+Now we would like to add this trajectory index, contained in the table *unique_trj*, to the table loaded from *trj.tsv*. We accomplish this using again the function *inner_join*. Now the merging keys are the four diseases constituting each trajectory. 
+
+```{r}
+merged_trj <- inner_join(trj, unique_trj, 
+                          by = c("Disease1", "Disease2", "Disease3", "Disease4")) %>% 
+  select("ID","TRJ_IDX") # Here we select only the column ID and TRJ_IDX, as the single disease information is not used in the model. 
+
+head(merged_trj)
+```
+
+Since the trajectory index is a categorical feature, we need to find a way to include this information in the input data. The choice here is to one hot encode it. Using one hot encoding, each column represents a unique trajectory, and a binary value encodes the presence/absence of that specific trajectory for the patient in that row.
+
+```{r}
+input_trj <- merged_trj %>% 
+  unique() %>%
+  mutate(n = 1)%>% 
+  spread(TRJ_IDX, n, fill = 0) %>% 
+  filter(ID %in% cpr_to_lpr$ID)
+
+```
+
+Here we simply add the outcome column merging the *input_trj* file generated above and the *cpr_to_lpr* table.
+
+```{r}
+nn_input <- inner_join(input_trj, cpr_to_lpr %>% select(ID, OUTCOME), by="ID") # we select only ID and OUTCOME from cpr_to_lpr
+```
+
+When evaluating the perfomance of the model, we use an external dataset that has not been seen by the model during training. This set is called for this reason test set. In the following section we extract 70% of the IDs randomly, and then we use them for extracting the training set. The remaining IDs will populate the test set. 
+
+```{r}
+train_id <- nn_input %>%
+  sample_frac(0.70) %>% 
+  select(ID)
+
+nn_input_train <- nn_input %>% 
+  filter(ID %in% train_id$ID) %>% 
+  select(- ID)   # We exclude the ID column as we do not want it included in the input data
+nn_input_test <- nn_input %>% 
+  filter(!ID %in% train_id$ID) %>% 
+  select(- ID)  # We exclude the ID column as we do not want it included in the input data
+  
+```
+
+### Define the model
+After playing a bit with the [Tensorflow Playground](https://playground.tensorflow.org/), you have probably noticed that the number of hyperparamters to tune is high, resulting in combinations that can lead to different performances. I would suggest you to have a look at *?keras_model_sequential* documentation to have a full overview of the function. You can tune the parameters and try to achieve the best AUC value.
+
+Try use the keras package. Have a look at the documentation [here](https://www.rstudio.com/blog/keras-for-r/) and build the best possible neural network. 
+
+```{r}
+
+## add code here
+#see this example
+
+model <- keras_model_sequential()
+model %>%
+  layer_dense(units = 256, activation = "relu", input_shape = c(ncol(nn_input_train) -1)) %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  # metrics = c("accuracy", "mse")
+)
+
+xtrain_keras <- simplify2array(nn_input_train[!(colnames(nn_input_train) %in% "OUTCOME")])
+ytrain_keras <- simplify2array(nn_input_train[colnames(nn_input_train) %in% "OUTCOME"])
+
+history <- model %>% fit(
+  xtrain_keras, ytrain_keras, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2,
+  callbacks = callback_tensorboard("logs/example_run"),
+)
+
+```
+
+
+### Evaluation
+
+Here we evaluate the network on the test set. First we use the compute function for generating the output (the compute function does not update the weights of the network, so the model does not train on the data passed). After that we can use the functions inside *pROC* to extract the metrics we need for the evaluation. You can also use the plot.roc function to visualize the roc curve.
+
+```{r}
+xtest_keras <- simplify2array(nn_input_test[!(colnames(nn_input_test) %in% "OUTCOME")])
+ytest_keras <- simplify2array(nn_input_test[colnames(nn_input_test) %in% "OUTCOME"])
+
+pred <- model %>% predict(xtest_keras)
+
+roc_obj <- roc(ytest_keras, pred)
+auc(roc_obj)
+coords(roc_obj, c(0.1,0.2, 0.4, 0.5, 0.7), ret=c("tp", "tn", "fp", "fn", "sensitivity", "specificity"))
+```
+
+
+## Additional 1
+Use tensorboard to visualize the training curves. Look at the documentation of tfruns to learn how to run an hyperparameters search and log the experiments into tensorboard. 
+```{r}
+
+## add code here
+
+```
+
+## Additional 2
+
+Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes. 
+```{r}
+
+## add code here
+
+```
+
