@@ -11,7 +11,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Neural network for longitudinal data
-The aim of this notebook is to predict 5 years mortality for patients diagnosed with hypertension before the age of 65 using on their disease history. To accomplish this task, we will use the synthetic data provided. 
+
+The aim of this notebook is to predict 5 years mortality for patients diagnosed with hypertension before the age of 65 using on their disease history. To accomplish this task, we will use the synthetic data provided.
 
 Here we load the libraries used for the data transformation, for the neural network implementation and for the analysis of the results. If a library is missing, you can install it using the command *install.packages(pkgs)*.
 
@@ -22,7 +23,7 @@ library(pROC)
 library(keras)
 ```
 
-Here you can load the three files used in this notebook. I would suggest spending some time here to understand the content of the different files. Use head to visualize the three tables. In order to make transformation to the dates, we need to parse them as such. Either load the tables parsing directly the columns as date or use the command *as.Date* to convert them in the desired format - check which columns should be dates. Be aware that the file lpr here was already filtered on the I10 ICD code and is different from the previous exercise. 
+Here you can load the three files used in this notebook. I would suggest spending some time here to understand the content of the different files. Use head to visualize the three tables. In order to make transformation to the dates, we need to parse them as such. Either load the tables parsing directly the columns as date or use the command *as.Date* to convert them in the desired format - check which columns should be dates. Note that lpr.tsv only contains hypertension disease codes.
 
 ```{r}
 cpr <- read.csv('cpr.tsv', sep='\t', header = TRUE)
@@ -30,27 +31,25 @@ lpr <- read.csv('lpr.tsv', sep='\t', header = TRUE)
 trj <- read.csv('trj.tsv', sep='\t', header = TRUE)
 ```
 
-
-
-Here we select the patients that got hypertension disease code before 65y. The age information in not included in the lpr table, so we need to merge lpr and cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The merging key is passed to the function through the parameter *by=*. 
+Here we select the patients that got hypertension disease code before 65y. The age information is not included in the lpr table, so we need to merge lpr and cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The merging key is passed to the function through the parameter *by=*.
 
 ```{r}
 
 ```
 
-Then we add the columns *AGE_AT_DIAG* and *AGE_AT_STATUS* using the mutate function in *dplyr.* The two columns indicate how old was the patient when he got first time diagnosed with hypertension and how old he was at the *STATUS_DATE*.
+Then we add the columns *AGE_AT_DIAG* and *AGE_AT_STATUS* using the mutate function in *dplyr.* The two columns indicate how old was the patient when he first got diagnosed with hypertension and how old he was at the *STATUS_DATE (date of death or censoring)*.
 
 ```{r}
 
 ```
 
-At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, we will also exclude those patients that were alive at the 'end of the registry' and received their I10 diagnosis in the last 5 years. This choice allows us to simplify the design of the experiment by ignoring censored patients.  
+At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, we will also exclude those patients that were alive at the 'end of the registry' and received their I10 diagnosis in the last 5 years. This choice allows us to simplify the design of the experiment by ignoring censored patients. Patients that were alive at STATUS_DATE have STATUS=90. Patients that have STATUS=1 died on their STATUS_DATE.
 
 ```{r}
 
 ```
 
-The final step is to generate the outcome column. The binary outcome encodes death as 1 and survival as 0. You can use again the mutate function from *dplyr*.  
+The final step is to generate the outcome column. The binary outcome encodes death as 1 and survival as 0. You can use again the mutate function from *dplyr*.
 
 ```{r}
 
@@ -58,19 +57,20 @@ The final step is to generate the outcome column. The binary outcome encodes dea
 ```
 
 #### Generate the input
-The model takes as input a table containing the target (the OUTCOME column generated above) and the input data. In order to generate the input for the model, we first need to extract a table *unique_trj* with the unique trajectories all the patients have, so that we can index them. This is one way to encode the data - feel free to explore other alternatives. 
+
+The model takes as input a table containing the target (the OUTCOME column generated above) and the input data. In order to generate the input for the model, we first need to extract a table *unique_trj* with the unique trajectories all the patients have, so that we can index them. This is one way to encode the data - feel free to explore other alternatives.
 
 ```{r}
 
 ```
 
-Now we would like to add this trajectory index, contained in the table *unique_trj*, to the table loaded from *trj.tsv*. We accomplish this using again the function *inner_join*. Now the merging keys are the four diseases constituting each trajectory. 
+Now we would like to add this trajectory index, contained in the table *unique_trj*, to the table loaded from *trj.tsv*. We accomplish this using again the function *inner_join*. Now the merging keys are the four diseases constituting each trajectory.
 
 ```{r}
 
 ```
 
-Since the trajectory index is a categorical feature, we need to find a way to include this information in the input data. The choice here is to one hot encode it. Using one hot encoding, each column represents a unique trajectory, and a binary value encodes the presence/absence of that specific trajectory for the patient in that row. Remember to use the *head* command to inspect the table and check the data manipula
+Since the trajectory index is a categorical feature, we need to find a way to include this information in the input data. The choice here is to one hot encode it. Using one hot encoding, each column represents a unique trajectory, and a binary value encodes the presence/absence of that specific trajectory for the patient in that row. Remember to use the *head* command to inspect the table and check the data manipulation.
 
 ```{r}
 
@@ -82,20 +82,21 @@ Here we simply add the outcome column merging the *input_trj* file generated abo
 
 ```
 
-When evaluating the perfomance of the model, we use an external dataset that has not been seen by the model during training. This set is called for this reason test set. In the following section we extract 70% of the IDs randomly, and then we use them for extracting the training set. The remaining IDs will populate the test set. 
+When evaluating the performance of the model, we use an external dataset that has not been seen by the model during training. This set is called for this reason test set. In the following section we extract 70% of the IDs randomly, and then we use them for extracting the training set. The remaining IDs will populate the test set.
 
 ```{r}
 
 ```
 
 ### Define the model
-After playing a bit with the [Tensorflow Playground](https://playground.tensorflow.org/), you have probably noticed that the number of hyperparamters to tune is high, resulting in combinations that can lead to different performances. I would suggest you to have a look at *?keras_model_sequential* documentation to have a full overview of the function. You can tune the parameters and try to achieve the best AUC value.
 
-Try use the keras package. Have a look at the documentation [here](https://www.rstudio.com/blog/keras-for-r/) and build the best possible neural network. 
+After playing a bit with the [Tensorflow Playground](https://playground.tensorflow.org/), you have probably noticed that the number of hyperparameters to tune is high, resulting in combinations that can lead to different performances. I would suggest you to have a look at *?keras_model_sequential* documentation to have a full overview of the function. You can tune the parameters and try to achieve the best AUC value.
+
+Try use the keras package. Have a look at the documentation [here](https://www.rstudio.com/blog/keras-for-r/) and build the best possible neural network.
+
 ```{r}
 
 ```
-
 
 ### Evaluation
 
@@ -105,9 +106,10 @@ Here we evaluate the network on the test set. First we use the compute function 
 
 ```
 
-
 ## Additional 1
-Use tensorboard to visualize the training curves. Look at the documentation of tfruns to learn how to run an hyperparameters search and log the experiments into tensorboard. 
+
+Use tensorboard to visualize the training curves. Look at the documentation of tfruns to learn how to run an hyperparameters search and log the experiments into tensorboard.
+
 ```{r}
 ## add code here
 
@@ -115,9 +117,9 @@ Use tensorboard to visualize the training curves. Look at the documentation of t
 
 ## Additional 2
 
-Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes. 
+Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes.
+
 ```{r}
 ## add code here
 
 ```
-
