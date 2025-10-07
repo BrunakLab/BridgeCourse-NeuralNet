@@ -20,7 +20,7 @@ Here we load the libraries used for the data transformation, for the neural netw
 library(tidyverse)
 library(lubridate)
 library(pROC)
-library(keras)
+library(keras3)
 ```
 
 Here you can load the three files used in this notebook. I would suggest spending some time here to understand the content of the different files. Use head to visualize the three tables. In order to make transformation to the dates, we need to parse them as such. Either load the tables parsing directly the columns as date or use the command *as.Date* to convert them in the desired format - check which columns should be dates. Note that lpr.tsv only contains hypertension disease codes.
