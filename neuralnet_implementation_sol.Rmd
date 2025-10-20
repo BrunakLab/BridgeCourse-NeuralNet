@@ -61,7 +61,7 @@ cpr_to_lpr <- cpr_to_lpr %>%
 head(cpr_to_lpr)
 ```
 
-At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, we will also exclude those patients that were alive at the 'end of the registry' and received their I10 diagnosis in the last 5 years. This choice allows us to simplify the design of the experiment by ignoring censored patients. Patients that were alive at STATUS_DATE have STATUS=90. Patients that have STATUS=1 died on their STATUS_DATE.
+At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, we will also exclude those patients that were alive at the 'end of the registry' and received their I10 diagnosis in the last 5 years. This choice allows us to simplify the design of the experiment by ignoring censored patients. Patients that were alive at STATUS_DATE have STATUS=1. Patients that have STATUS=90 died on their STATUS_DATE.
 
 ```{r}
 cpr_to_lpr <- cpr_to_lpr %>% 
