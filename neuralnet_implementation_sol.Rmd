@@ -23,7 +23,7 @@ library(pROC)
 library(keras3)
 ```
 
-Here you can load the three files used in this notebook. I would suggest spending some time here to understand the content of the different files. Use head to visualize the three tables. In order to make transformation to the dates, we need to parse them as such. Either load the tables parsing directly the columns as date or use the command *as.Date* to convert them in the desired format - check which columns should be dates. Note that lpr.tsv only contains hypertension disease codes.
+Here you can load the three files used in this notebook. I would suggest to spend a few minutes here to understand the content of the different files. Use head to visualize the three tables. In order to make transformation to the dates, we need to parse them as such. Either load the tables parsing directly the columns as date or use the command *as.Date* to convert them in the desired format - check which columns should be dates. Note that lpr.tsv only contains hypertension disease codes.
 
 ```{r}
 cpr <- read.csv('cpr.tsv', sep='\t', header = TRUE)
@@ -43,7 +43,7 @@ cpr$STATUS_DATE <- as.Date(cpr$STATUS_DATE)
 lpr$ADM_DATE <- as.Date(lpr$ADM_DATE)
 ```
 
-Here we select the patients that got hypertension disease code before 65y. The age information is not included in the lpr table, so we need to merge lpr and cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The merging key is passed to the function through the parameter *by=*.
+First we select the patients that got hypertension disease code before 65y. The age information is not included in the lpr table, so we need to merge lpr and cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The merging key is passed to the function through the parameter *by=*.
 
 ```{r}
 cpr_to_lpr <- inner_join(cpr, lpr, by='ID') 
@@ -58,7 +58,7 @@ cpr_to_lpr <- cpr_to_lpr %>%
     AGE_AT_STATUS = time_length(BIRTHDAY %--% STATUS_DATE, "years") %>% round(1)
   )
 
-head(cpr_to_lpr)
+head(cpr_to_lpr) %>% select(AGE_AT_DIAG, AGE_AT_STATUS)
 ```
 
 At this point, we can filter out the patients that we do not want to include in the study. In this case, as arbitrary choice, we select only the patients who got diagnosed before 65. In addition to this, we will also exclude those patients that were alive at the 'end of the registry' and received their I10 diagnosis in the last 5 years. This choice allows us to simplify the design of the experiment by ignoring censored patients. Patients that were alive at STATUS_DATE have STATUS=1. Patients that have STATUS=90 died on their STATUS_DATE.
@@ -115,6 +115,7 @@ input_trj <- merged_trj %>%
   spread(TRJ_IDX, n, fill = 0) %>% 
   filter(ID %in% cpr_to_lpr$ID)
 
+head(input_trj)
 ```
 
 Here we simply add the outcome column merging the *input_trj* file generated above and the *cpr_to_lpr* table.
@@ -141,7 +142,7 @@ nn_input_test <- nn_input %>%
 
 ### Define the model
 
-After playing a bit with the [Tensorflow Playground](https://playground.tensorflow.org/), you have probably noticed that the number of hyperparamters to tune is high, resulting in combinations that can lead to different performances. I would suggest you to have a look at *?keras_model_sequential* documentation to have a full overview of the function and to use *layer_dense* for the hidden layers. You can tune the parameters and try to achieve the best AUC value.
+We have talked about a few of the things to consider when creating neural networks. Try to play around a bit with the [Tensorflow Playground](https://playground.tensorflow.org/). The goal is to create a network that takes in the features X1, X2, etc. and attempts to correctly classify the orange and blue dots. To train the model press the play button and try to adjust the number of hidden layers and neurons in order to create a better model. You can see how well you are doing by whether the background color (classification boundary for the orange and blue class) matches the color of the dots. You have probably noticed that the number of hyperparameters to tune is high, resulting in combinations that can lead to different performances. Before trying to define a model yourself, I would suggest you to have a look at *?keras_model_sequential* documentation to have a full overview of the function. You can tune the parameters and try to achieve the best AUC value.
 
 Try to use the keras package. Have a look at the documentation [here](https://www.rstudio.com/blog/keras-for-r/) and build the best possible neural network.
 
@@ -153,6 +154,9 @@ Try to use the keras package. Have a look at the documentation [here](https://ww
 model <- keras_model_sequential() 
 model %>% 
   layer_dense(units = 256, activation = "relu") %>% 
+  # Dropout removes features at random during training with some rate.
+  # This reduces reliance on specific features and makes the network
+  # less prone to overfitting.
   layer_dropout(rate = 0.4) %>% 
   layer_dense(units = 128, activation = "relu") %>%
   layer_dropout(rate = 0.3) %>%
@@ -171,7 +175,6 @@ history <- model %>% fit(
   xtrain_keras, ytrain_keras, 
   epochs = 30, batch_size = 128, 
   validation_split = 0.2,
-  callbacks = callback_tensorboard("logs/example_run"),
 )
 
 ```
@@ -194,10 +197,127 @@ plot.roc(roc_obj)
 
 ## Additional
 
-Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes.
+There are many ways that the input data can be modeled and these have different assumptions. The one hot encoding of trajectories, as we have done in this exercise is just one example. Instead you can try to one hot encode the ICD codes instead of the trajectories. Treat each row in the *trj* dataframe as a unique observation and predict hypertension as before using the ICD codes directly instead of the trajectories.
+
+Here are a few things you can consider:
+
+Instead of manually converting the codes to one hot encodings you can use *?layer_embedding* . This will change the dimensionality of your input and you will need to adjust the model to reflect that. *layer_max_pooling_1d* is one example.
+
+Another suggestion is to model the temporal relation between diagnoses, as the order of diseases often play an important role in our understanding of the patient. Instead of using a pooling function the dependencies can be modeled using a sequential layer (*?layer_gru*).
 
 ```{r}
+library(rsample)
 
-## add code here
+# For simplicity we use the trj from before and use as individual observations with the labels defined previously.
+df <- trj |>
+  left_join(
+    cpr_to_lpr |> select(ID, OUTCOME),
+    by = "ID"
+  ) |> 
+  filter(!is.na(OUTCOME))
 
+X <- as.matrix(df |> select(starts_with("Disease")))
+
+max_length <- 4L #Since there is 4 diagnoses per trajectory
+
+# Assign each unique codes a number
+code_levels <- unique(as.vector(X))
+code_levels <- code_levels[!is.na(code_levels)]
+
+# Apply that number to our input data
+X <- matrix(
+  match(X, code_levels),
+  nrow = nrow(X),
+  ncol = ncol(X)
+)
+
+y <- as.integer(df$OUTCOME)
+
+# A different way of splitting training and test
+split <- initial_split(
+  data.frame(idx = seq_along(y), outcome = y),
+  prop = 0.8,
+  strata = outcome
+)
+
+train_idx <- training(split)$idx
+test_idx <- testing(split)$idx
+
+X_train <- X[train_idx, , drop = FALSE]
+X_test  <- X[test_idx, , drop = FALSE]
+
+y_train <- y[train_idx]
+y_test  <- y[test_idx]
+
+```
+
+```{r}
+# We define how our input looks
+input <- keras_input(
+  shape = max_length,
+  dtype = "int32"
+)
+
+# A dense model that performs a max pooling operation
+output <- input |>
+  layer_embedding(
+    input_dim = length(code_levels) + 1,
+    output_dim = 32,
+    mask_zero = TRUE
+  ) |>
+  layer_dense(units = 64, activation = "relu") |>
+  layer_max_pooling_1d(pool_size = max_length) |>
+  layer_flatten() |>
+  layer_dense(units = 32, activation = "relu") |>
+  layer_dropout(0.2) |>
+  layer_dense(units = 1, activation = "sigmoid")
+
+model_dense <- keras_model(input, output)
+
+model_dense %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  # metrics = c("accuracy", "mse")
+)
+
+history <- model_dense %>% fit(
+  X_train, y_train, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2,
+)
+
+
+```
+
+```{r}
+input <- keras_input(
+  shape = max_length,
+  dtype = "int32"
+)
+
+# A sequential model that uses a gru
+output <- input |>
+  layer_embedding(
+    input_dim = length(code_levels) + 1,
+    output_dim = 32,
+    mask_zero = TRUE
+  ) |>
+  layer_gru(units = 64) |>
+  layer_dropout(0.2) |>
+  layer_dense(units = 32, activation = "relu") |>
+  layer_dense(units = 1, activation = "sigmoid")
+
+model_gru <- keras_model(input, output)
+
+model_gru %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  # metrics = c("accuracy", "mse")
+)
+
+history <- model_gru %>% fit(
+  X_train, y_train, 
+  epochs = 30, batch_size = 128, 
+  validation_split = 0.2,
+)
 ```

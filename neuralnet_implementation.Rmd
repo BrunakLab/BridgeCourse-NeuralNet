@@ -23,7 +23,7 @@ library(pROC)
 library(keras3)
 ```
 
-Here you can load the three files used in this notebook. I would suggest spending some time here to understand the content of the different files. Use head to visualize the three tables. In order to make transformation to the dates, we need to parse them as such. Either load the tables parsing directly the columns as date or use the command *as.Date* to convert them in the desired format - check which columns should be dates. Note that lpr.tsv only contains hypertension disease codes.
+Here you can load the three files used in this notebook. I would suggest to spend a few minutes here to understand the content of the different files. Use head to visualize the three tables. In order to make transformation to the dates, we need to parse them as such. Either load the tables parsing directly the columns as date or use the command *as.Date* to convert them in the desired format - check which columns should be dates. Note that lpr.tsv only contains hypertension disease codes.
 
 ```{r}
 cpr <- read.csv('cpr.tsv', sep='\t', header = TRUE)
@@ -31,7 +31,7 @@ lpr <- read.csv('lpr.tsv', sep='\t', header = TRUE)
 trj <- read.csv('trj.tsv', sep='\t', header = TRUE)
 ```
 
-Here we select the patients that got hypertension disease code before 65y. The age information is not included in the lpr table, so we need to merge lpr and cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The merging key is passed to the function through the parameter *by=*.
+First we select the patients that got hypertension disease code before 65y. The age information is not included in the lpr table, so we need to merge lpr and cpr table. The function *inner_join* from *dplyr* library allows us to merge the two tables. The merging key is passed to the function through the parameter *by=*.
 
 ```{r}
 
@@ -90,7 +90,7 @@ When evaluating the performance of the model, we use an external dataset that ha
 
 ### Define the model
 
-After playing a bit with the [Tensorflow Playground](https://playground.tensorflow.org/), you have probably noticed that the number of hyperparameters to tune is high, resulting in combinations that can lead to different performances. I would suggest you to have a look at *?keras_model_sequential* documentation to have a full overview of the function. You can tune the parameters and try to achieve the best AUC value.
+We have talked about a few of the things to consider when creating neural networks. Try to play around a bit with the [Tensorflow Playground](https://playground.tensorflow.org/). The goal is to create a network that takes in the features X1, X2, etc. and attempts to correctly classify the orange and blue dots. To train the model press the play button and try to adjust the number of hidden layers and neurons in order to create a better model. You can see how well you are doing by whether the background color (classification boundary for the orange and blue class) matches the color of the dots. You have probably noticed that the number of hyperparameters to tune is high, resulting in combinations that can lead to different performances. Before trying to define a model yourself, I would suggest you to have a look at *?keras_model_sequential* documentation to have a full overview of the function. You can tune the parameters and try to achieve the best AUC value.
 
 Try use the keras package. Have a look at the documentation [here](https://www.rstudio.com/blog/keras-for-r/) and build the best possible neural network.
 
@@ -106,20 +106,17 @@ Here we evaluate the network on the test set. First we use the compute function 
 
 ```
 
-## Additional 1
+## Additional
 
-Use tensorboard to visualize the training curves. Look at the documentation of tfruns to learn how to run an hyperparameters search and log the experiments into tensorboard.
+There are many ways that the input data can be modeled and these have different assumptions. The one hot encoding of trajectories, as we have done in this exercise is just one example. Instead you can try to one hot encode the ICD codes instead of the trajectories. Treat each row in the *trj* dataframe as a unique observation and predict hypertension as before using the ICD codes directly instead of the trajectories.
 
-```{r}
-## add code here
+Here are a few things you can consider:
 
-```
+Instead of manually converting the codes to one hot encodings you can use *?layer_embedding* . This will change the dimensionality of your input and you will need to adjust the model to reflect that. *layer_max_pooling_1d* is one example.
 
-## Additional 2
-
-Change the way the input is encoded. Instead of hot encoding the trajectories, you can for example hot encode the ICD codes.
+Another suggestion is to model the temporal relation between diagnoses, as the order of diseases often play an important role in our understanding of the patient. Instead of using a pooling function the dependencies can be modeled using a sequential layer (*?layer_gru*).
 
 ```{r}
-## add code here
+## add code here, but feel free to just see the solution for how to define the data and network
 
 ```
